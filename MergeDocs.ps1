@@ -120,11 +120,14 @@ function Convert-WordToPdf {
 
     try {
         $word = New-Object -ComObject Word.Application
-        # Visible defaults to $false via COM; DisplayAlerts defaults to all.
-        # We avoid setting these directly to prevent type library errors on
-        # systems where the startup bitness check was skipped.
+        $word.DisplayAlerts = 0  # wdAlertsNone — suppress format conversion dialogs for .doc files
 
         $doc = $word.Documents.Open([ref]$WordPath, [ref]$false, [ref]$true)  # ReadOnly
+
+        if ($null -eq $doc) {
+            throw "Word could not open the file. It may be corrupted or in an unsupported format."
+        }
+
         $doc.SaveAs([ref]$tempPdf, [ref]17)  # 17 = wdFormatPDF
         $doc.Close([ref]0)  # wdDoNotSaveChanges
         $doc = $null
@@ -137,7 +140,9 @@ function Convert-WordToPdf {
     finally {
         if ($doc)  { try { $doc.Close([ref]0) } catch {} }
         if ($word) { try { $word.Quit()        } catch {} }
-        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($word) | Out-Null
+        if ($word) {
+            [System.Runtime.InteropServices.Marshal]::ReleaseComObject($word) | Out-Null
+        }
         [System.GC]::Collect()
     }
 }
