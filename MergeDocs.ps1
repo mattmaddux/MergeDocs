@@ -141,44 +141,38 @@ function Convert-WordToPdf {
 
     $tempPdf = Join-Path $env:TEMP "merge_$(Get-Random).pdf"
     $doc = $null
-    $missing = [System.Type]::Missing
 
     try {
-        # Pass explicit parameters to suppress all possible dialogs:
-        # ConfirmConversions=$false, ReadOnly=$true, AddToRecentFiles=$false,
-        # skip password params, Revert=$false, skip write-password params,
-        # Format (default), Encoding (default), Visible=$false,
-        # OpenAndRepair=$false, DocumentDirection (default), NoEncodingDialog=$true
-        $doc = $word.Documents.Open(
-            $WordPath,  # FileName
-            $false,     # ConfirmConversions
-            $true,      # ReadOnly
-            $false,     # AddToRecentFiles
-            $missing,   # PasswordDocument
-            $missing,   # PasswordTemplate
-            $false,     # Revert
-            $missing,   # WritePasswordDocument
-            $missing,   # WritePasswordTemplate
-            $missing,   # Format
-            $missing,   # Encoding
-            $false,     # Visible (document window)
-            $false,     # OpenAndRepair
-            $missing,   # DocumentDirection
-            $true       # NoEncodingDialog
+        # Use reflection to call Documents.Open with named parameters,
+        # avoiding PowerShell's COM marshaling issues with positional args.
+        $doc = $word.GetType().InvokeMember(
+            "Open",
+            [System.Reflection.BindingFlags]::InvokeMethod,
+            $null,
+            $word.Documents,
+            @($WordPath, $false, $true, $false),  # FileName, ConfirmConversions, ReadOnly, AddToRecentFiles
+            $null, $null, $null
         )
 
         # If the file opened in Protected View instead, extract it
         if ($null -eq $doc -and $word.ProtectedViewWindows.Count -gt 0) {
             $pvw = $word.ProtectedViewWindows.Item(1)
-            $doc = $pvw.Edit()  # exits Protected View into a regular document
+            $doc = $pvw.Edit()
         }
 
         if ($null -eq $doc) {
             throw "Word could not open the file. It may be corrupted or in an unsupported format."
         }
 
-        $doc.SaveAs($tempPdf, 17)  # 17 = wdFormatPDF
-        $doc.Close(0)  # wdDoNotSaveChanges
+        # Use reflection for SaveAs to avoid PSObject marshaling issues
+        $doc.GetType().InvokeMember(
+            "SaveAs", [System.Reflection.BindingFlags]::InvokeMethod,
+            $null, $doc, @($tempPdf, 17)  # 17 = wdFormatPDF
+        )
+        $doc.GetType().InvokeMember(
+            "Close", [System.Reflection.BindingFlags]::InvokeMethod,
+            $null, $doc, @(0)  # wdDoNotSaveChanges
+        )
         $doc = $null
 
         return $tempPdf
@@ -187,7 +181,7 @@ function Convert-WordToPdf {
         throw "Failed to convert '$([System.IO.Path]::GetFileName($WordPath))' to PDF:`n$_"
     }
     finally {
-        if ($doc) { try { $doc.Close(0) } catch {} }
+        if ($doc) { try { $doc.GetType().InvokeMember("Close", [System.Reflection.BindingFlags]::InvokeMethod, $null, $doc, @(0)) } catch {} }
     }
 }
 
