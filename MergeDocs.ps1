@@ -115,24 +115,63 @@ if (-not (Test-Path $dllPath)) {
 Add-Type -Path $dllPath
 
 # ============================================================
-# HELPER: Convert Word doc to PDF via COM automation
-# Returns the path to a temporary PDF, or $null on failure.
+# HELPERS: Word COM automation for .doc/.docx to PDF conversion
 # ============================================================
+function New-WordInstance {
+    $word = New-Object -ComObject Word.Application
+    $word.Visible = $false
+    $word.DisplayAlerts = 0              # wdAlertsNone
+    $word.AutomationSecurity = 3         # msoAutomationSecurityForceDisable
+    $word.Options.UpdateLinksAtOpen = $false
+    $word.Options.UpdateFieldsAtPrint = $false
+    return $word
+}
+
+function Close-WordInstance {
+    param($word)
+    if ($word) {
+        try { $word.Quit() } catch {}
+        try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($word) } catch {}
+    }
+    [System.GC]::Collect()
+}
+
 function Convert-WordToPdf {
-    param([string]$WordPath)
+    param($word, [string]$WordPath)
 
     $tempPdf = Join-Path $env:TEMP "merge_$(Get-Random).pdf"
-    $word = $null
-    $doc  = $null
+    $doc = $null
+    $missing = [System.Type]::Missing
 
     try {
-        $word = New-Object -ComObject Word.Application
-        $word.Visible = $false
-        $word.DisplayAlerts = 0              # wdAlertsNone
-        $word.AutomationSecurity = 3         # msoAutomationSecurityForceDisable — prevent macro prompts
+        # Pass explicit parameters to suppress all possible dialogs:
+        # ConfirmConversions=$false, ReadOnly=$true, AddToRecentFiles=$false,
+        # skip password params, Revert=$false, skip write-password params,
+        # Format (default), Encoding (default), Visible=$false,
+        # OpenAndRepair=$false, DocumentDirection (default), NoEncodingDialog=$true
+        $doc = $word.Documents.Open(
+            $WordPath,  # FileName
+            $false,     # ConfirmConversions
+            $true,      # ReadOnly
+            $false,     # AddToRecentFiles
+            $missing,   # PasswordDocument
+            $missing,   # PasswordTemplate
+            $false,     # Revert
+            $missing,   # WritePasswordDocument
+            $missing,   # WritePasswordTemplate
+            $missing,   # Format
+            $missing,   # Encoding
+            $false,     # Visible (document window)
+            $false,     # OpenAndRepair
+            $missing,   # DocumentDirection
+            $true       # NoEncodingDialog
+        )
 
-        # ConfirmConversions=$false, ReadOnly=$true, AddToRecentFiles=$false
-        $doc = $word.Documents.Open($WordPath, $false, $true, $false)
+        # If the file opened in Protected View instead, extract it
+        if ($null -eq $doc -and $word.ProtectedViewWindows.Count -gt 0) {
+            $pvw = $word.ProtectedViewWindows.Item(1)
+            $doc = $pvw.Edit()  # exits Protected View into a regular document
+        }
 
         if ($null -eq $doc) {
             throw "Word could not open the file. It may be corrupted or in an unsupported format."
@@ -148,12 +187,7 @@ function Convert-WordToPdf {
         throw "Failed to convert '$([System.IO.Path]::GetFileName($WordPath))' to PDF:`n$_"
     }
     finally {
-        if ($doc)  { try { $doc.Close(0) } catch {} }
-        if ($word) { try { $word.Quit()        } catch {} }
-        if ($word) {
-            [System.Runtime.InteropServices.Marshal]::ReleaseComObject($word) | Out-Null
-        }
-        [System.GC]::Collect()
+        if ($doc) { try { $doc.Close(0) } catch {} }
     }
 }
 
@@ -372,15 +406,27 @@ $mergeBtn.Add_Click({
     $statusLabel.Text = "Merging..."
     $form.Refresh()
 
+    $word = $null
     try {
-        # Step 1: Convert any Word docs to temp PDFs
+        # Step 1: Convert any Word docs to temp PDFs (single Word instance for all)
+        $hasWordFiles = $filePaths | Where-Object {
+            $ext = [System.IO.Path]::GetExtension($_).ToLower()
+            $ext -eq ".doc" -or $ext -eq ".docx"
+        }
+
+        if ($hasWordFiles) {
+            $statusLabel.Text = "Starting Word..."
+            $form.Refresh()
+            $word = New-WordInstance
+        }
+
         $pdfFiles = @()
         foreach ($file in $filePaths) {
             $ext = [System.IO.Path]::GetExtension($file).ToLower()
             if ($ext -eq ".doc" -or $ext -eq ".docx") {
                 $statusLabel.Text = "Converting $([System.IO.Path]::GetFileName($file))..."
                 $form.Refresh()
-                $tempPdf = Convert-WordToPdf $file
+                $tempPdf = Convert-WordToPdf $word $file
                 $tempFiles.Add($tempPdf) | Out-Null
                 $pdfFiles += $tempPdf
             }
@@ -422,6 +468,9 @@ $mergeBtn.Add_Click({
         $statusLabel.Text = "Merge failed."
     }
     finally {
+        # Shut down Word if we started it
+        Close-WordInstance $word
+
         # Clean up temp files from Word conversion
         foreach ($t in $tempFiles) {
             Remove-Item $t -Force -ErrorAction SilentlyContinue
