@@ -125,8 +125,14 @@ function Convert-WordFilesToPdf {
     $tempDir = Join-Path $env:TEMP "mergedocs_$(Get-Random)"
     New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 
+    # Write file list to a temp file to avoid argument parsing issues
+    $listFile = Join-Path $env:TEMP "mergedocs_list_$(Get-Random).txt"
+    $WordFiles | Set-Content -LiteralPath $listFile -Encoding UTF8
+
     $result = & powershell.exe -ExecutionPolicy Bypass -File $word2pdfScript `
-        -InputFiles $WordFiles -OutputDir $tempDir 2>&1
+        -InputList $listFile -OutputDir $tempDir 2>&1
+
+    Remove-Item $listFile -Force -ErrorAction SilentlyContinue
 
     $pdfPaths = @()
     $errors = @()

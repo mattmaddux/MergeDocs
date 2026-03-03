@@ -6,11 +6,14 @@
 # *********************************************************************
 param(
     [Parameter(Mandatory=$true)]
-    [string[]]$InputFiles,
+    [string]$InputList,
 
     [Parameter(Mandatory=$true)]
     [string]$OutputDir
 )
+
+# Read file paths from the list file (one per line)
+$InputFiles = @(Get-Content -LiteralPath $InputList | Where-Object { $_.Trim() -ne '' })
 
 $appWord = $null
 $docWord = $null
