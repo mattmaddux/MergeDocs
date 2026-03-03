@@ -151,97 +151,66 @@ function Convert-WordFilesToPdf {
 # ============================================================
 $form = New-Object System.Windows.Forms.Form -Property @{
     Text            = "PDF Merger"
-    Size            = New-Object System.Drawing.Size(560, 420)
+    Size            = New-Object System.Drawing.Size(500, 420)
     StartPosition   = "CenterScreen"
-    MinimumSize     = New-Object System.Drawing.Size(480, 350)
+    MinimumSize     = New-Object System.Drawing.Size(380, 320)
     Font            = New-Object System.Drawing.Font("Segoe UI", 9)
+    AllowDrop       = $true
 }
 
-# --- File list ---
+# --- File list (owner-drawn, full width) ---
 $listBox = New-Object System.Windows.Forms.ListBox -Property @{
     Location      = New-Object System.Drawing.Point(20, 20)
-    Size          = New-Object System.Drawing.Size(390, 260)
+    Size          = New-Object System.Drawing.Size(($form.ClientSize.Width - 40), 260)
     Anchor        = "Top,Left,Right,Bottom"
     SelectionMode = "One"
+    DrawMode      = "OwnerDrawFixed"
+    ItemHeight    = 26
+    AllowDrop     = $true
 }
 $form.Controls.Add($listBox)
 
 # We store full paths separately since the listbox shows display names
 $filePaths = [System.Collections.ArrayList]::new()
 
-# --- Buttons panel (right side) ---
-$btnX     = 420
-$btnW     = 100
-$btnFont  = New-Object System.Drawing.Font("Segoe UI", 9)
-
-$addBtn = New-Object System.Windows.Forms.Button -Property @{
-    Text     = "Add Files..."
-    Location = New-Object System.Drawing.Point($btnX, 20)
-    Size     = New-Object System.Drawing.Size($btnW, 30)
-    Anchor   = "Top,Right"
-    Font     = $btnFont
-}
-
-$removeBtn = New-Object System.Windows.Forms.Button -Property @{
-    Text     = "Remove"
-    Location = New-Object System.Drawing.Point($btnX, 58)
-    Size     = New-Object System.Drawing.Size($btnW, 30)
-    Anchor   = "Top,Right"
-    Font     = $btnFont
-}
-
-$upBtn = New-Object System.Windows.Forms.Button -Property @{
-    Text     = "Move Up"
-    Location = New-Object System.Drawing.Point($btnX, 108)
-    Size     = New-Object System.Drawing.Size($btnW, 30)
-    Anchor   = "Top,Right"
-    Font     = $btnFont
-}
-
-$downBtn = New-Object System.Windows.Forms.Button -Property @{
-    Text     = "Move Down"
-    Location = New-Object System.Drawing.Point($btnX, 146)
-    Size     = New-Object System.Drawing.Size($btnW, 30)
-    Anchor   = "Top,Right"
-    Font     = $btnFont
-}
-
+# --- Bottom buttons ---
 $clearBtn = New-Object System.Windows.Forms.Button -Property @{
     Text     = "Clear All"
-    Location = New-Object System.Drawing.Point($btnX, 196)
-    Size     = New-Object System.Drawing.Size($btnW, 30)
-    Anchor   = "Top,Right"
-    Font     = $btnFont
+    Size     = New-Object System.Drawing.Size(80, 36)
+    Anchor   = "Bottom,Left"
+    Font     = New-Object System.Drawing.Font("Segoe UI", 9)
 }
-
-$form.Controls.Add($addBtn)
-$form.Controls.Add($removeBtn)
-$form.Controls.Add($upBtn)
-$form.Controls.Add($downBtn)
+$clearBtn.Location = New-Object System.Drawing.Point(20, ($form.ClientSize.Height - 52))
 $form.Controls.Add($clearBtn)
 
-# --- Merge button (bottom) ---
 $mergeBtn = New-Object System.Windows.Forms.Button -Property @{
     Text     = "Merge to PDF..."
     Size     = New-Object System.Drawing.Size(160, 40)
     Anchor   = "Bottom,Right"
     Font     = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
 }
-# Position it relative to form bottom-right
 $mergeBtn.Location = New-Object System.Drawing.Point(
     ($form.ClientSize.Width  - $mergeBtn.Width  - 20),
     ($form.ClientSize.Height - $mergeBtn.Height - 15))
 $form.Controls.Add($mergeBtn)
 
-# --- Status label (bottom left) ---
+# --- Status label (bottom center) ---
 $statusLabel = New-Object System.Windows.Forms.Label -Property @{
-    Text      = "Add files to begin."
-    Location  = New-Object System.Drawing.Point(20, ($form.ClientSize.Height - 42))
-    Size      = New-Object System.Drawing.Size(300, 20)
+    Text      = "Drag files here to begin."
+    Location  = New-Object System.Drawing.Point(110, ($form.ClientSize.Height - 44))
+    Size      = New-Object System.Drawing.Size(200, 20)
     Anchor    = "Bottom,Left"
     ForeColor = [System.Drawing.SystemColors]::GrayText
 }
 $form.Controls.Add($statusLabel)
+
+# ============================================================
+# DRAG STATE for internal reorder
+# ============================================================
+$script:dragIndex = -1
+$script:dragStart = [System.Drawing.Point]::Empty
+$script:isInternalDrag = $false
+$script:xBtnWidth = 26
 
 # ============================================================
 # HELPER: refresh the listbox display from $filePaths
@@ -256,69 +225,223 @@ function Update-ListDisplay {
         $listBox.Items.Add("$($i + 1). [$tag] $name") | Out-Null
     }
     $listBox.EndUpdate()
+    $listBox.Invalidate()
 
     $count = $filePaths.Count
-    $statusLabel.Text = if ($count -eq 0) { "Add files to begin." }
+    $statusLabel.Text = if ($count -eq 0) { "Drag files here to begin." }
                         elseif ($count -eq 1) { "1 file added." }
                         else { "$count files added." }
 }
 
 # ============================================================
-# BUTTON HANDLERS
+# OWNER-DRAW: draw items with X remove button
 # ============================================================
+$listBox.Add_DrawItem({
+    param($sender, $e)
+    if ($e.Index -lt 0) { return }
 
-# --- Add Files ---
-$addBtn.Add_Click({
-    $dlg = New-Object System.Windows.Forms.OpenFileDialog -Property @{
-        Title       = "Select PDFs or Word documents"
-        Filter      = "Supported files (*.pdf;*.doc;*.docx)|*.pdf;*.doc;*.docx|PDF files (*.pdf)|*.pdf|Word documents (*.doc;*.docx)|*.doc;*.docx|All files (*.*)|*.*"
-        Multiselect = $true
+    $e.DrawBackground()
+
+    $text = $sender.Items[$e.Index]
+    $isSelected = ($e.State -band [System.Windows.Forms.DrawItemState]::Selected)
+    $textColor = if ($isSelected) {
+        [System.Drawing.SystemColors]::HighlightText
+    } else {
+        [System.Drawing.SystemColors]::WindowText
     }
 
-    if ($dlg.ShowDialog() -eq "OK") {
-        foreach ($f in ($dlg.FileNames | Sort-Object)) {
-            $filePaths.Add($f) | Out-Null
-        }
-        Update-ListDisplay
-        $listBox.SelectedIndex = $listBox.Items.Count - 1
+    # Draw item text (leave room for X button)
+    $textRect = New-Object System.Drawing.RectangleF(
+        ($e.Bounds.X + 6), $e.Bounds.Y,
+        ($e.Bounds.Width - $script:xBtnWidth - 10), $e.Bounds.Height)
+    $sf = New-Object System.Drawing.StringFormat
+    $sf.LineAlignment = [System.Drawing.StringAlignment]::Center
+    $sf.FormatFlags = [System.Drawing.StringFormatFlags]::NoWrap
+    $brush = New-Object System.Drawing.SolidBrush $textColor
+    $e.Graphics.DrawString($text, $e.Font, $brush, $textRect, $sf)
+    $brush.Dispose()
+
+    # Draw X button on the right
+    $xRect = New-Object System.Drawing.RectangleF(
+        ($e.Bounds.Right - $script:xBtnWidth), $e.Bounds.Y,
+        $script:xBtnWidth, $e.Bounds.Height)
+    $xBrush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(160, 160, 160))
+    $xFont = New-Object System.Drawing.Font("Segoe UI", 8)
+    $xSf = New-Object System.Drawing.StringFormat
+    $xSf.Alignment = [System.Drawing.StringAlignment]::Center
+    $xSf.LineAlignment = [System.Drawing.StringAlignment]::Center
+    $e.Graphics.DrawString([char]0x2715, $xFont, $xBrush, $xRect, $xSf)
+    $xBrush.Dispose()
+    $xFont.Dispose()
+
+    $e.DrawFocusRectangle()
+})
+
+# Paint hint text when list is empty
+$listBox.Add_Paint({
+    param($sender, $e)
+    if ($filePaths.Count -eq 0) {
+        $hint = "Drag PDF or Word files here"
+        $hintFont = New-Object System.Drawing.Font("Segoe UI", 11)
+        $hintBrush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(170, 170, 170))
+        $sf = New-Object System.Drawing.StringFormat
+        $sf.Alignment = [System.Drawing.StringAlignment]::Center
+        $sf.LineAlignment = [System.Drawing.StringAlignment]::Center
+        $rect = New-Object System.Drawing.RectangleF(0, 0, $sender.ClientSize.Width, $sender.ClientSize.Height)
+        $e.Graphics.DrawString($hint, $hintFont, $hintBrush, $rect, $sf)
+        $hintFont.Dispose()
+        $hintBrush.Dispose()
     }
 })
 
-# --- Remove ---
-$removeBtn.Add_Click({
-    $idx = $listBox.SelectedIndex
-    if ($idx -ge 0) {
+# ============================================================
+# CLICK: X button removes item
+# ============================================================
+$listBox.Add_MouseClick({
+    param($sender, $e)
+    $idx = $sender.IndexFromPoint($e.Location)
+    if ($idx -lt 0) { return }
+
+    $itemRect = $sender.GetItemRectangle($idx)
+    if ($e.X -ge ($itemRect.Right - $script:xBtnWidth)) {
         $filePaths.RemoveAt($idx)
         Update-ListDisplay
         if ($filePaths.Count -gt 0) {
-            $listBox.SelectedIndex = [Math]::Min($idx, $filePaths.Count - 1)
+            $sender.SelectedIndex = [Math]::Min($idx, $filePaths.Count - 1)
         }
     }
 })
 
-# --- Move Up ---
-$upBtn.Add_Click({
-    $idx = $listBox.SelectedIndex
-    if ($idx -gt 0) {
-        $temp = $filePaths[$idx]
-        $filePaths[$idx]     = $filePaths[$idx - 1]
-        $filePaths[$idx - 1] = $temp
-        Update-ListDisplay
-        $listBox.SelectedIndex = $idx - 1
+# ============================================================
+# DRAG-TO-REORDER: mouse handlers on listbox
+# ============================================================
+$listBox.Add_MouseDown({
+    param($sender, $e)
+    if ($e.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
+    $idx = $sender.IndexFromPoint($e.Location)
+    if ($idx -ge 0) {
+        # Don't start drag if clicking the X button
+        $itemRect = $sender.GetItemRectangle($idx)
+        if ($e.X -lt ($itemRect.Right - $script:xBtnWidth)) {
+            $script:dragIndex = $idx
+            $script:dragStart = $e.Location
+        }
     }
 })
 
-# --- Move Down ---
-$downBtn.Add_Click({
-    $idx = $listBox.SelectedIndex
-    if ($idx -ge 0 -and $idx -lt ($filePaths.Count - 1)) {
-        $temp = $filePaths[$idx]
-        $filePaths[$idx]     = $filePaths[$idx + 1]
-        $filePaths[$idx + 1] = $temp
-        Update-ListDisplay
-        $listBox.SelectedIndex = $idx + 1
+$listBox.Add_MouseMove({
+    param($sender, $e)
+    if ($script:dragIndex -lt 0) { return }
+    if ($e.Button -ne [System.Windows.Forms.MouseButtons]::Left) {
+        $script:dragIndex = -1
+        return
+    }
+
+    $dx = [Math]::Abs($e.X - $script:dragStart.X)
+    $dy = [Math]::Abs($e.Y - $script:dragStart.Y)
+    if ($dx -gt [System.Windows.Forms.SystemInformation]::DragSize.Width -or
+        $dy -gt [System.Windows.Forms.SystemInformation]::DragSize.Height) {
+        $script:isInternalDrag = $true
+        $sender.DoDragDrop($script:dragIndex.ToString(), [System.Windows.Forms.DragDropEffects]::Move)
+        $script:isInternalDrag = $false
+        $script:dragIndex = -1
     }
 })
+
+$listBox.Add_MouseUp({
+    $script:dragIndex = -1
+})
+
+# ============================================================
+# DRAG-DROP: accept files from Explorer + internal reorder
+# ============================================================
+$listBox.Add_DragEnter({
+    param($sender, $e)
+    if ($script:isInternalDrag) {
+        $e.Effect = [System.Windows.Forms.DragDropEffects]::Move
+    }
+    elseif ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) {
+        $e.Effect = [System.Windows.Forms.DragDropEffects]::Copy
+    }
+    else {
+        $e.Effect = [System.Windows.Forms.DragDropEffects]::None
+    }
+})
+
+$listBox.Add_DragOver({
+    param($sender, $e)
+    if ($script:isInternalDrag) {
+        $e.Effect = [System.Windows.Forms.DragDropEffects]::Move
+    }
+    elseif ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) {
+        $e.Effect = [System.Windows.Forms.DragDropEffects]::Copy
+    }
+})
+
+$listBox.Add_DragDrop({
+    param($sender, $e)
+
+    if ($script:isInternalDrag) {
+        # Internal reorder
+        $fromIdx = [int]$e.Data.GetData([System.Windows.Forms.DataFormats]::Text)
+        $pt = $sender.PointToClient((New-Object System.Drawing.Point($e.X, $e.Y)))
+        $toIdx = $sender.IndexFromPoint($pt)
+        if ($toIdx -lt 0) { $toIdx = $filePaths.Count - 1 }
+
+        if ($fromIdx -ne $toIdx) {
+            $item = $filePaths[$fromIdx]
+            $filePaths.RemoveAt($fromIdx)
+            $filePaths.Insert($toIdx, $item)
+            Update-ListDisplay
+            $sender.SelectedIndex = $toIdx
+        }
+    }
+    elseif ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) {
+        # External file drop
+        $droppedFiles = $e.Data.GetData([System.Windows.Forms.DataFormats]::FileDrop)
+        $supported = @('.pdf', '.doc', '.docx')
+        foreach ($f in ($droppedFiles | Sort-Object)) {
+            $ext = [System.IO.Path]::GetExtension($f).ToLower()
+            if ($ext -in $supported) {
+                $filePaths.Add($f) | Out-Null
+            }
+        }
+        Update-ListDisplay
+        if ($filePaths.Count -gt 0) {
+            $sender.SelectedIndex = $filePaths.Count - 1
+        }
+    }
+})
+
+# Also accept drops on the form itself (in case they miss the listbox)
+$form.Add_DragEnter({
+    param($sender, $e)
+    if ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) {
+        $e.Effect = [System.Windows.Forms.DragDropEffects]::Copy
+    }
+})
+
+$form.Add_DragDrop({
+    param($sender, $e)
+    if ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) {
+        $droppedFiles = $e.Data.GetData([System.Windows.Forms.DataFormats]::FileDrop)
+        $supported = @('.pdf', '.doc', '.docx')
+        foreach ($f in ($droppedFiles | Sort-Object)) {
+            $ext = [System.IO.Path]::GetExtension($f).ToLower()
+            if ($ext -in $supported) {
+                $filePaths.Add($f) | Out-Null
+            }
+        }
+        Update-ListDisplay
+        if ($filePaths.Count -gt 0) {
+            $listBox.SelectedIndex = $filePaths.Count - 1
+        }
+    }
+})
+
+# ============================================================
+# BUTTON HANDLERS
+# ============================================================
 
 # --- Clear All ---
 $clearBtn.Add_Click({
