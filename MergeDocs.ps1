@@ -18,6 +18,16 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
+# Hide the console window so only the GUI is visible
+Add-Type -Name Win32 -Namespace Native -MemberDefinition @'
+    [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+    [DllImport("user32.dll")]   public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+'@
+$consoleHwnd = [Native.Win32]::GetConsoleWindow()
+if ($consoleHwnd -ne [IntPtr]::Zero) {
+    [void][Native.Win32]::ShowWindow($consoleHwnd, 0)  # 0 = SW_HIDE
+}
+
 $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $libDir    = Join-Path $scriptDir "lib"
 $dllPath   = Join-Path $libDir "PdfSharp.dll"
@@ -484,9 +494,11 @@ $mergeBtn.Add_Click({
     $outputFile = $saveDlg.FileName
     $tempFiles  = [System.Collections.ArrayList]::new()
 
-    # Change cursor to wait
+    # Disable UI during processing
     $form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
     $mergeBtn.Enabled = $false
+    $clearBtn.Enabled = $false
+    $listBox.Enabled  = $false
     $statusLabel.Text = "Merging..."
     $form.Refresh()
 
@@ -544,7 +556,12 @@ $mergeBtn.Add_Click({
             "Merged PDF saved to:`n$outputFile`n`n$($filePaths.Count) files merged, $totalPages total pages.",
             "Success", "OK", "Information")
 
-        $statusLabel.Text = "Done - $totalPages pages saved."
+        # Clean up temp files before closing
+        foreach ($t in $tempFiles) {
+            Remove-Item $t -Force -ErrorAction SilentlyContinue
+        }
+        $form.Close()
+        return
     }
     catch {
         [System.Windows.Forms.MessageBox]::Show(
@@ -559,6 +576,8 @@ $mergeBtn.Add_Click({
         }
         $form.Cursor = [System.Windows.Forms.Cursors]::Default
         $mergeBtn.Enabled = $true
+        $clearBtn.Enabled = $true
+        $listBox.Enabled  = $true
     }
 })
 
