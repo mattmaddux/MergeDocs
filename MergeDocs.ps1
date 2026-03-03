@@ -28,16 +28,23 @@ $dllPath   = Join-Path $libDir "PdfSharp.dll"
 # and auto-relaunches in the matching PowerShell if needed.
 # ============================================================
 if (-not $SkipWordCheck) {
-    $wordOk = $false
+    $testWord = $null
     try {
         $testWord = New-Object -ComObject Word.Application
         $testWord.Visible = $false  # triggers TYPE_E_CANTLOADLIBRARY on mismatch
         $testWord.Quit()
         [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($testWord)
+        $testWord = $null
         [System.GC]::Collect()
-        $wordOk = $true
     }
     catch {
+        # Clean up the test Word instance so it doesn't leave a zombie process
+        if ($testWord) {
+            try { $testWord.Quit() } catch {}
+            try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($testWord) } catch {}
+            [System.GC]::Collect()
+        }
+
         if ($_.Exception.Message -match 'TYPE_E_CANTLOADLIBRARY|80029C4A') {
             if ([Environment]::Is64BitProcess) {
                 $altPs = Join-Path $env:SystemRoot "SysWOW64\WindowsPowerShell\v1.0\powershell.exe"
@@ -120,9 +127,12 @@ function Convert-WordToPdf {
 
     try {
         $word = New-Object -ComObject Word.Application
-        $word.DisplayAlerts = 0  # wdAlertsNone — suppress format conversion dialogs for .doc files
+        $word.Visible = $false
+        $word.DisplayAlerts = 0              # wdAlertsNone
+        $word.AutomationSecurity = 3         # msoAutomationSecurityForceDisable — prevent macro prompts
 
-        $doc = $word.Documents.Open($WordPath, $false, $true)  # ReadOnly
+        # ConfirmConversions=$false, ReadOnly=$true, AddToRecentFiles=$false
+        $doc = $word.Documents.Open($WordPath, $false, $true, $false)
 
         if ($null -eq $doc) {
             throw "Word could not open the file. It may be corrupted or in an unsupported format."
