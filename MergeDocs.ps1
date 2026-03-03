@@ -143,15 +143,12 @@ function Convert-WordToPdf {
     $doc = $null
 
     try {
-        # Use reflection to call Documents.Open with named parameters,
-        # avoiding PowerShell's COM marshaling issues with positional args.
-        $doc = $word.Documents.GetType().InvokeMember(
-            "Open",
-            [System.Reflection.BindingFlags]::InvokeMethod,
-            $null,
-            $word.Documents,
-            @($WordPath, $false, $true, $false),  # FileName, ConfirmConversions, ReadOnly, AddToRecentFiles
-            $null, $null, $null
+        # Direct COM call — matches the standard approach used by battle-tested scripts
+        $doc = $word.Documents.Open(
+            [ref]$WordPath,
+            [ref]$false,    # ConfirmConversions
+            [ref]$true,     # ReadOnly
+            [ref]$false     # AddToRecentFiles
         )
 
         # If the file opened in Protected View instead, extract it
@@ -164,15 +161,12 @@ function Convert-WordToPdf {
             throw "Word could not open the file. It may be corrupted or in an unsupported format."
         }
 
-        # Use reflection for SaveAs to avoid PSObject marshaling issues
-        $doc.GetType().InvokeMember(
-            "SaveAs", [System.Reflection.BindingFlags]::InvokeMethod,
-            $null, $doc, @($tempPdf, 17)  # 17 = wdFormatPDF
+        # ExportAsFixedFormat is the purpose-built method for PDF export
+        $doc.ExportAsFixedFormat(
+            [ref]$tempPdf,
+            [ref]17          # wdExportFormatPDF
         )
-        $doc.GetType().InvokeMember(
-            "Close", [System.Reflection.BindingFlags]::InvokeMethod,
-            $null, $doc, @(0)  # wdDoNotSaveChanges
-        )
+        $doc.Close([ref]0)   # wdDoNotSaveChanges
         $doc = $null
 
         return $tempPdf
@@ -181,7 +175,7 @@ function Convert-WordToPdf {
         throw "Failed to convert '$([System.IO.Path]::GetFileName($WordPath))' to PDF:`n$_"
     }
     finally {
-        if ($doc) { try { $doc.GetType().InvokeMember("Close", [System.Reflection.BindingFlags]::InvokeMethod, $null, $doc, @(0)) } catch {} }
+        if ($doc) { try { $doc.Close([ref]0) } catch {} }
     }
 }
 
