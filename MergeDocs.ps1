@@ -372,7 +372,7 @@ $mergeBtn.Add_Click({
         if ($wordFiles.Count -gt 0) {
             $statusLabel.Text = "Converting Word documents..."
             $form.Refresh()
-            $pdfResults = Convert-WordFilesToPdf $wordFiles
+            $pdfResults = @(Convert-WordFilesToPdf $wordFiles)
             # Map each input Word file to its output PDF by matching filenames
             for ($i = 0; $i -lt $wordFiles.Count; $i++) {
                 $convertedPdfs[$wordFiles[$i]] = $pdfResults[$i]
