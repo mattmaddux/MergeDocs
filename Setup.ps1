@@ -13,9 +13,7 @@ $lumberRoot = $PSScriptRoot
 $toolsDir   = Join-Path $lumberRoot "tools"
 
 # Use All Users Start Menu if running as admin, otherwise Current User
-$isAdmin = ([Security.Principal.WindowsPrincipal] `
-    [Security.Principal.WindowsIdentity]::GetCurrent()
-).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if ($isAdmin) {
     $startMenuBase = [Environment]::GetFolderPath("CommonPrograms")
