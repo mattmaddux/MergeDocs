@@ -142,9 +142,16 @@ function Convert-WordFilesToPdf {
     $listFile = Join-Path $env:TEMP "mergedocs_list_$(Get-Random).txt"
     $WordFiles | Set-Content -LiteralPath $listFile -Encoding UTF8
 
-    # Use $PSHome to match the bitness of the current PowerShell process
-    # (which may have been relaunched by the Word COM compatibility check).
-    $psExe = Join-Path $PSHome "powershell.exe"
+    # Detect Office bitness from the registry and pick the matching PowerShell
+    $officePlatform = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration" -ErrorAction SilentlyContinue).Platform
+    if ($officePlatform -eq 'x86' -and [Environment]::Is64BitProcess) {
+        $psExe = Join-Path $env:SystemRoot "SysWOW64\WindowsPowerShell\v1.0\powershell.exe"
+    } elseif ($officePlatform -eq 'x64' -and -not [Environment]::Is64BitProcess) {
+        # Sysnative bypasses WoW64 redirection to reach the real 64-bit System32
+        $psExe = Join-Path $env:SystemRoot "Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+    } else {
+        $psExe = Join-Path $PSHome "powershell.exe"
+    }
     $result = & $psExe -ExecutionPolicy Bypass -File $word2pdfScript `
         -InputList $listFile -OutputDir $tempDir 2>&1
 
