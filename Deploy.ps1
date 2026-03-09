@@ -21,7 +21,7 @@ if (-not $git) {
 }
 
 if (Test-Path (Join-Path $installDir ".git")) {
-    # Already installed — pull latest
+    # Already installed - pull latest
     Write-Host "Updating LumberTools..."
     git -C $installDir pull --ff-only
     if ($LASTEXITCODE -ne 0) {
@@ -47,7 +47,7 @@ if (Test-Path $setupScript) {
     Write-Host "Running Setup.ps1..."
     & powershell.exe -ExecutionPolicy Bypass -File $setupScript
 } else {
-    Write-Warning "Setup.ps1 not found — shortcuts were not created."
+    Write-Warning "Setup.ps1 not found - shortcuts were not created."
 }
 
 Write-Host "Done."

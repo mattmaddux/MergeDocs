@@ -4,6 +4,7 @@ A collection of PowerShell GUI utilities for managing client endpoints, distribu
 
 ## Project Structure
 ```
+Deploy.ps1                      # RMM script: clones/pulls repo, runs Setup.ps1
 Setup.ps1                       # Creates Start Menu shortcuts from tool manifests
 tools/
   <ToolName>/
@@ -35,15 +36,18 @@ tools/
 - Hide the console window in GUI tools (Win32 ShowWindow)
 
 ## Deployment
-1. Intune/RMM syncs this repo to `C:\LumberTools\`
-2. Post-sync runs: `powershell.exe -ExecutionPolicy Bypass -File "C:\LumberTools\Setup.ps1"`
-3. Shortcuts appear in Start Menu under "LumberTools"
+`Deploy.ps1` is designed to be run via Intune or RMM (as SYSTEM). It handles both fresh installs and updates:
+- If `C:\LumberTools` doesn't exist, clones the repo and runs `Setup.ps1`
+- If it already exists, pulls latest changes and re-runs `Setup.ps1`
+- Requires Git to be pre-installed on the endpoint
+
+Usage: `powershell.exe -ExecutionPolicy Bypass -File "Deploy.ps1"`
 
 ## Tools
 
 ### MergeDocs (`tools/MergeDocs/`)
 Merges PDFs and Word documents (.doc/.docx) into a single PDF.
-- `MergeDocs.ps1` — GUI app (WinForms, drag-and-drop)
-- `Word2PDF.ps1` — subprocess for Word-to-PDF conversion via COM automation
+- `MergeDocs.ps1` - GUI app (WinForms, drag-and-drop)
+- `Word2PDF.ps1` - subprocess for Word-to-PDF conversion via COM automation
 - PdfSharp 1.50.x for PDF merging (auto-downloaded; 1.50 targets .NET Framework 4.x)
 - Word COM via `Documents.Open()` + `ExportAsFixedFormat()` in a clean subprocess
