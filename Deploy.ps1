@@ -12,11 +12,22 @@
 $installDir = "C:\LumberTools"
 $repoUrl    = "https://github.com/mattmaddux/LumberTools.git"
 
+# Resolve winget (not in PATH when running as SYSTEM)
+$winget = Get-Command winget -ErrorAction SilentlyContinue
+if (-not $winget) {
+    $wingetPath = Resolve-Path "$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*_x64__8wekyb3d8bbwe\winget.exe" -ErrorAction SilentlyContinue | Select-Object -Last 1
+    if ($wingetPath) { $winget = $wingetPath.Path }
+}
+if (-not $winget) {
+    Write-Error "WinGet is not installed. Cannot install Git."
+    exit 1
+}
+
 # Ensure git is available, install via winget if missing
 $git = Get-Command git -ErrorAction SilentlyContinue
 if (-not $git) {
     Write-Host "Git not found. Installing via winget..."
-    winget install --id Git.Git --source winget --silent --accept-package-agreements --accept-source-agreements
+    & $winget install --id Git.Git --source winget --silent --accept-package-agreements --accept-source-agreements
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Git installation failed."
         exit 1
